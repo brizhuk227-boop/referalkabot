@@ -13,8 +13,8 @@ API_TOKEN = os.getenv("API_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 PORT = int(os.getenv("PORT", "8080"))
 
-CHANNEL_LINK = "https://t.me/your_channel"
-CHANNEL_USERNAME = "@your_channel"
+CHANNEL_LINK = "https://t.me/Incloud2"
+CHANNEL_USERNAME = "@Incloud Shop Tallinn"
 
 if not API_TOKEN:
     raise ValueError("No API_TOKEN")
