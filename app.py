@@ -34,7 +34,6 @@ def main_kb(user_id):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Перейти в канал", url="https://t.me/+qHEfLgFh-OpkZjc0")],
         [InlineKeyboardButton(text="👥 Пригласить друзей", url=f"https://t.me/Incloudrefbot?start={user_id}"
-
         [InlineKeyboardButton(text="💰 Баланс", callback_data="balance")],
         [InlineKeyboardButton(text="🏆 Топ", callback_data="top")]
     ])
