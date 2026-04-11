@@ -6,9 +6,8 @@ from aiogram.filters import Command
 from flask import Flask
 
 API_TOKEN = "8386393114:AAGZwzCy4b5PGbO79VeDMlLPhJcGgbXRxi4"
-ADMIN_ID = 7467619605  # твой Telegram ID
+ADMIN_ID = 7467619605
 
-# ВАЖНО: сюда вставь ID канала (например -1001234567890)
 CHANNEL_ID = -1003758162553
 
 bot = Bot(token=API_TOKEN)
