@@ -1,239 +1,156 @@
-import os
 import asyncio
 import sqlite3
-from threading import Thread
-
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.types import Message, ChatJoinRequest, ReplyKeyboardMarkup, KeyboardButton
-from flask import Flask, render_template_string
+from aiogram.types import Message, ChatJoinRequest, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command
+from flask import Flask
 
-# ================= CONFIG =================
+API_TOKEN = "8386393114:AAGZwzCy4b5PGbO79VeDMlLPhJcGgbXRxi4"
+ADMIN_ID = 7467619605  # твой Telegram ID
 
-API_TOKEN = os.getenv("API_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-PORT = int(os.getenv("PORT", "8080"))
+# ВАЖНО: сюда вставь ID канала (например -1001234567890)
+CHANNEL_ID = -1003758162553
 
-CHANNEL_LINK = "https://t.me/+qHEfLgFh-OpkZjc0"
-CHANNEL_USERNAME = "@Incloud Shop Tallinn"
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher()
+router = Router()
+dp.include_router(router)
 
-if not API_TOKEN:
-    raise ValueError("No API_TOKEN")
-
-# ================= DB =================
-
-conn = sqlite3.connect("bot.db", check_same_thread=False)
+# БД
+conn = sqlite3.connect("db.sqlite3")
 cur = conn.cursor()
 
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
-    username TEXT,
-    full_name TEXT,
     referrer_id INTEGER,
     balance INTEGER DEFAULT 0,
-    is_subscribed INTEGER DEFAULT 0,
-    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    is_subscribed INTEGER DEFAULT 0
 )
 """)
-
 conn.commit()
 
-def add_user(user_id, username, full_name, referrer_id=None):
-    cur.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
-    if cur.fetchone():
-        return
+# ===== КНОПКИ =====
+def main_kb(user_id):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Перейти в канал", url="https://t.me/ТВОЯ_ССЫЛКА")],
+        [InlineKeyboardButton(text="👥 Пригласить друзей", url=f"https://t.me/ТВОЙ_БОТ?start={user_id}")],
+        [InlineKeyboardButton(text="💰 Баланс", callback_data="balance")],
+        [InlineKeyboardButton(text="🏆 Топ", callback_data="top")]
+    ])
 
-    cur.execute("""
-    INSERT INTO users (user_id, username, full_name, referrer_id)
-    VALUES (?, ?, ?, ?)
-    """, (user_id, username, full_name, referrer_id))
-
-    conn.commit()
-
-def get_users():
-    cur.execute("SELECT * FROM users")
-    return cur.fetchall()
-
-def get_top():
-    cur.execute("""
-    SELECT username, balance FROM users
-    ORDER BY balance DESC LIMIT 10
-    """)
-    return cur.fetchall()
-
-# ================= BOT =================
-
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
-router = Router()
-
-# ===== КНОПКИ
-
-kb = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="✅ Проверить подписку")],
-        [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="🏆 Топ")]
-    ],
-    resize_keyboard=True
-)
-
-# ===== ПРОВЕРКА ПОДПИСКИ
-
-async def check_subscription(user_id):
-    try:
-        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status in ["member", "administrator", "creator"]
-    except:
-        return False
-
-# ===== START
-
-@router.message(F.text.startswith("/start"))
+# ===== /start =====
+@router.message(Command("start"))
 async def start(message: Message):
-    args = message.text.split()
-
-    ref_id = None
-    if len(args) > 1:
-        try:
-            ref_id = int(args[1])
-        except:
-            pass
-
-    user = message.from_user
-
-    add_user(
-        user.id,
-        user.username or "no_username",
-        user.full_name,
-        referrer_id=ref_id
-    )
-
-    bot_info = await bot.get_me()
-    ref_link = f"https://t.me/{bot_info.username}?start={user.id}"
-
-    await message.answer(
-        f"👋 Привет!\n\n"
-        f"📢 Подпишись на канал:\n{CHANNEL_LINK}\n\n"
-        f"🔗 Твоя реферальная ссылка:\n{ref_link}\n\n"
-        f"После подписки нажми кнопку ниже 👇",
-        reply_markup=kb
-    )
-
-# ===== ПРОВЕРКА
-
-@router.message(F.text == "✅ Проверить подписку")
-async def check_sub(message: Message):
     user_id = message.from_user.id
 
-    is_sub = await check_subscription(user_id)
+    args = message.text.split()
+    ref_id = int(args[1]) if len(args) > 1 else None
 
-    if not is_sub:
-        await message.answer("❌ Ты не подписан на канал")
-        return
+    cur.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
+    if not cur.fetchone():
+        cur.execute("INSERT INTO users (user_id, referrer_id) VALUES (?, ?)", (user_id, ref_id))
+        conn.commit()
 
-    cur.execute("SELECT is_subscribed, referrer_id FROM users WHERE user_id=?", (user_id,))
-    data = cur.fetchone()
+    await message.answer(
+        "👋 Добро пожаловать!\n\nПодпишись на канал и приглашай друзей 🚀",
+        reply_markup=main_kb(user_id)
+    )
 
-    if not data:
-        return
+# ===== БАЛАНС =====
+@router.callback_query(F.data == "balance")
+async def balance(call):
+    cur.execute("SELECT balance FROM users WHERE user_id=?", (call.from_user.id,))
+    bal = cur.fetchone()[0]
 
-    is_done, ref_id = data
+    await call.message.answer(f"💰 Твой баланс: {bal}")
 
-    if is_done:
-        await message.answer("✅ Уже засчитано")
-        return
-
-    # отмечаем подписку
-    cur.execute("UPDATE users SET is_subscribed=1 WHERE user_id=?", (user_id,))
-
-    # начисляем рефералу
-    if ref_id:
-        cur.execute("UPDATE users SET balance = balance + 1 WHERE user_id=?", (ref_id,))
-
-    conn.commit()
-
-    await message.answer("🎉 Подписка подтверждена!")
-
-# ===== БАЛАНС
-
-@router.message(F.text == "💰 Баланс")
-async def balance(message: Message):
-    cur.execute("SELECT balance FROM users WHERE user_id=?", (message.from_user.id,))
-    bal = cur.fetchone()
-
-    await message.answer(f"💰 Твой баланс: {bal[0] if bal else 0}")
-
-# ===== ТОП
-
-@router.message(F.text == "🏆 Топ")
-async def top(message: Message):
-    data = get_top()
+# ===== ТОП =====
+@router.callback_query(F.data == "top")
+async def top(call):
+    cur.execute("SELECT user_id, balance FROM users ORDER BY balance DESC LIMIT 10")
+    users = cur.fetchall()
 
     text = "🏆 Топ рефералов:\n\n"
-    for i, u in enumerate(data, 1):
-        text += f"{i}. @{u[0]} — {u[1]}\n"
+    for i, (uid, bal) in enumerate(users, 1):
+        text += f"{i}. {uid} — {bal}\n"
 
-    await message.answer(text)
+    await call.message.answer(text)
 
-# ===== JOIN REQUEST (авто принятие)
-
-@router.chat_join_request()
-async def join(req: ChatJoinRequest):
-    await req.approve()
-
-# ===== BROADCAST
-
-@router.message(F.text.startswith("/broadcast"))
+# ===== РАССЫЛКА =====
+@router.message(Command("broadcast"))
 async def broadcast(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    text = message.text.replace("/broadcast", "").strip()
-    users = get_users()
+    text = message.text.replace("/broadcast ", "")
 
-    for u in users:
+    cur.execute("SELECT user_id FROM users")
+    users = cur.fetchall()
+
+    for user in users:
         try:
-            await bot.send_message(u[0], text)
-            await asyncio.sleep(0.03)
+            await bot.send_message(user[0], text)
         except:
             pass
 
     await message.answer("✅ Рассылка завершена")
 
-# ================= WEB =================
+# ===== АВТОНАЧИСЛЕНИЕ =====
+@router.chat_join_request()
+async def join_request_handler(req: ChatJoinRequest):
+    user_id = req.from_user.id
 
+    cur.execute("SELECT is_subscribed, referrer_id FROM users WHERE user_id=?", (user_id,))
+    data = cur.fetchone()
+
+    if not data:
+        await req.approve()
+        return
+
+    is_subscribed, ref_id = data
+
+    if is_subscribed:
+        await req.approve()
+        return
+
+    # отмечаем подписку
+    cur.execute("UPDATE users SET is_subscribed=1 WHERE user_id=?", (user_id,))
+
+    # начисляем рефереру
+    if ref_id:
+        cur.execute("UPDATE users SET balance = balance + 1 WHERE user_id=?", (ref_id,))
+
+    conn.commit()
+
+    await req.approve()
+
+# ===== FLASK (веб админка) =====
 app = Flask(__name__)
-
-HTML = """
-<h1>Admin Panel</h1>
-
-<h2>Users: {{users|length}}</h2>
-
-<h3>Top:</h3>
-<ul>
-{% for u in top %}
-<li>{{u[0]}} — {{u[1]}}</li>
-{% endfor %}
-</ul>
-"""
 
 @app.route("/")
 def index():
-    return render_template_string(
-        HTML,
-        users=get_users(),
-        top=get_top()
-    )
+    cur.execute("SELECT COUNT(*) FROM users")
+    total = cur.fetchone()[0]
 
-def run_web():
-    app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
+    cur.execute("SELECT user_id, balance FROM users ORDER BY balance DESC LIMIT 5")
+    top_users = cur.fetchall()
 
-# ================= RUN =================
+    html = f"<h1>Users: {total}</h1><h2>Top:</h2>"
+    for u in top_users:
+        html += f"<p>{u[0]} — {u[1]}</p>"
 
+    return html
+
+# ===== ЗАПУСК =====
 async def main():
-    Thread(target=run_web, daemon=True).start()
-    dp.include_router(router)
-    await dp.start_polling(bot)
+    asyncio.create_task(dp.start_polling(bot))
+
+    from threading import Thread
+    Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
+
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     asyncio.run(main())
