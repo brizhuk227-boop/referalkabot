@@ -4,10 +4,11 @@ from aiogram import Bot, Dispatcher, Router, F
 from aiogram.types import Message, ChatJoinRequest, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
 from flask import Flask
+from threading import Thread
 
+# ===== ТВОИ ДАННЫЕ (НЕ ТРОГАЛ) =====
 API_TOKEN = "8386393114:AAGZwzCy4b5PGbO79VeDMlLPhJcGgbXRxi4"
 ADMIN_ID = 7467619605
-
 CHANNEL_ID = -1003758162553
 BOT_USERNAME = "Incloudrefbot"
 
@@ -17,7 +18,7 @@ router = Router()
 dp.include_router(router)
 
 # ===== DB =====
-conn = sqlite3.connect("db.sqlite3")
+conn = sqlite3.connect("db.sqlite3", check_same_thread=False)
 cur = conn.cursor()
 
 cur.execute("""
@@ -25,6 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     referrer_id INTEGER,
     balance INTEGER DEFAULT 0,
+    invites INTEGER DEFAULT 0,
     is_subscribed INTEGER DEFAULT 0
 )
 """)
@@ -33,18 +35,9 @@ conn.commit()
 # ===== КЛАВИАТУРЫ =====
 def main_kb(user_id):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📋 Меню", callback_data="menu")
-        ],
-        [
-            InlineKeyboardButton(text="📢 Канал", url="https://t.me/+qHEfLgFh-OpkZjc0")
-        ],
-        [
-            InlineKeyboardButton(
-                text="👥 Пригласить друзей",
-                url=f"https://t.me/{BOT_USERNAME}?start={user_id}"
-            )
-        ]
+        [InlineKeyboardButton(text="📋 Меню", callback_data="menu")],
+        [InlineKeyboardButton(text="📢 Канал", url="https://t.me/+qHEfLgFh-OpkZjc0")],
+        [InlineKeyboardButton(text="👥 Рефералка", callback_data="ref")]
     ])
 
 def menu_kb(user_id):
@@ -52,12 +45,6 @@ def menu_kb(user_id):
         [
             InlineKeyboardButton(text="💰 Баланс", callback_data="balance"),
             InlineKeyboardButton(text="🏆 Топ", callback_data="top")
-        ],
-        [
-            InlineKeyboardButton(
-                text="👥 Рефералка",
-                url=f"https://t.me/{BOT_USERNAME}?start={user_id}"
-            )
         ],
         [
             InlineKeyboardButton(text="🔙 Назад", callback_data="back")
@@ -68,17 +55,29 @@ def menu_kb(user_id):
 @router.message(Command("start"))
 async def start(message: Message):
     user_id = message.from_user.id
-
     args = message.text.split()
+
     ref_id = int(args[1]) if len(args) > 1 else None
 
     cur.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
     if not cur.fetchone():
-        cur.execute("INSERT INTO users (user_id, referrer_id) VALUES (?, ?)", (user_id, ref_id))
+        cur.execute(
+            "INSERT INTO users (user_id, referrer_id) VALUES (?, ?)",
+            (user_id, ref_id)
+        )
+
+        if ref_id:
+            cur.execute("""
+                UPDATE users 
+                SET balance = balance + 1,
+                    invites = invites + 1
+                WHERE user_id=?
+            """, (ref_id,))
+
         conn.commit()
 
     await message.answer(
-        "👋 Добро пожаловать!\n\nПодпишись на канал и приглашай друзей 🚀",
+        "👋 Добро пожаловать!\n\nПриглашай друзей и зарабатывай 💰",
         reply_markup=main_kb(user_id)
     )
 
@@ -101,14 +100,47 @@ async def balance(call: CallbackQuery):
 # ===== TOP =====
 @router.callback_query(F.data == "top")
 async def top(call: CallbackQuery):
-    cur.execute("SELECT user_id, balance FROM users ORDER BY balance DESC LIMIT 10")
+    cur.execute("SELECT user_id, invites FROM users ORDER BY invites DESC LIMIT 10")
     users = cur.fetchall()
 
-    text = "🏆 Топ:\n\n"
-    for i, (uid, bal) in enumerate(users, 1):
-        text += f"{i}. {uid} — {bal}\n"
+    text = "🏆 Топ приглашений:\n\n"
+    for i, (uid, inv) in enumerate(users, 1):
+        text += f"{i}. {uid} — {inv} приглашений\n"
 
     await call.message.answer(text)
+
+# ===== РЕФЕРАЛКА =====
+@router.callback_query(F.data == "ref")
+async def ref(call: CallbackQuery):
+    user_id = call.from_user.id
+    link = f"https://t.me/{BOT_USERNAME}?start={user_id}"
+
+    cur.execute("SELECT invites FROM users WHERE user_id=?", (user_id,))
+    row = cur.fetchone()
+    invites = row[0] if row else 0
+
+    if invites >= 50:
+        level = "💎 Diamond"
+    elif invites >= 20:
+        level = "🥇 Gold"
+    elif invites >= 10:
+        level = "🥈 Silver"
+    else:
+        level = "🥉 Bronze"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="📤 Поделиться",
+            url=f"https://t.me/share/url?url={link}"
+        )]
+    ])
+
+    await call.message.answer(
+        f"👥 Твоя ссылка:\n{link}\n\n"
+        f"📊 Приглашено: {invites}\n"
+        f"🏆 Уровень: {level}",
+        reply_markup=kb
+    )
 
 # ===== BROADCAST =====
 @router.message(Command("broadcast"))
@@ -127,33 +159,11 @@ async def broadcast(message: Message):
         except:
             pass
 
-    await message.answer("✅ Рассылка отправлена")
+    await message.answer("✅ Рассылка готова")
 
-# ===== JOIN REQUEST AUTO =====
+# ===== JOIN REQUEST (если используешь) =====
 @router.chat_join_request()
 async def join(req: ChatJoinRequest):
-    user_id = req.from_user.id
-
-    cur.execute("SELECT is_subscribed, referrer_id FROM users WHERE user_id=?", (user_id,))
-    data = cur.fetchone()
-
-    if not data:
-        await req.approve()
-        return
-
-    is_subscribed, ref_id = data
-
-    if is_subscribed:
-        await req.approve()
-        return
-
-    cur.execute("UPDATE users SET is_subscribed=1 WHERE user_id=?", (user_id,))
-
-    if ref_id:
-        cur.execute("UPDATE users SET balance = balance + 1 WHERE user_id=?", (ref_id,))
-
-    conn.commit()
-
     await req.approve()
 
 # ===== FLASK ADMIN =====
@@ -164,19 +174,18 @@ def index():
     cur.execute("SELECT COUNT(*) FROM users")
     total = cur.fetchone()[0]
 
-    cur.execute("SELECT user_id, balance FROM users ORDER BY balance DESC LIMIT 5")
+    cur.execute("SELECT user_id, invites FROM users ORDER BY invites DESC LIMIT 5")
     top = cur.fetchall()
 
     html = f"<h1>Users: {total}</h1><h2>Top:</h2>"
     for u in top:
         html += f"<p>{u[0]} — {u[1]}</p>"
+
     return html
 
 # ===== RUN =====
 async def main():
     asyncio.create_task(dp.start_polling(bot))
-
-    from threading import Thread
     Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
 
     while True:
