@@ -13,7 +13,7 @@ API_TOKEN = os.getenv("API_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 PORT = int(os.getenv("PORT", "8080"))
 
-CHANNEL_LINK = "https://t.me/+_TuDWhNkqRYyZjM0"
+CHANNEL_LINK = "https://t.me/+qHEfLgFh-OpkZjc0"
 CHANNEL_USERNAME = "@Incloud Shop Tallinn"
 
 if not API_TOKEN:
